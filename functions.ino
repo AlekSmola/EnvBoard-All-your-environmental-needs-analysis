@@ -10,7 +10,6 @@
 
 // ## LCD Data displaying
    
-  //void display_draw_weather(DateTime current_time_func, dane_z_sensora_ext_temp ext_temperature_func,dane_z_sensora_BME680 bme680_readings_func, dane_z_sensora_SCD40 scd40_readings_func ){  
   void display_draw_weather(){ 
     // ## black out section which are suppose to updated
     setup_lcd_after_SD();
@@ -50,6 +49,53 @@
     u8g2.sendBuffer();
   }
 
+  void display_draw_temgraph(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "display_draw_temgraph");
+    u8g2.sendBuffer();
+  }
+
+  void display_draw_humgraph(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "display_draw_humgraph");
+    u8g2.sendBuffer();
+  }
+
+  void display_draw_pressgraph(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "display_draw_pressgraph");
+    u8g2.sendBuffer();
+  }
+
+  void display_draw_c02graph(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "display_draw_c02graph");
+    u8g2.sendBuffer();
+  }
+  
+  void display_draw_stats(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "display_draw_stats");
+    u8g2.sendBuffer();
+  }
+  
+  void display_draw_credits(){
+    setup_lcd_after_SD();
+    u8g2.clearDisplay();
+    white();
+    u8g2.drawStr(0,8, "This is credits screen");
+    u8g2.sendBuffer();
+  }
 // ## END LCD Data displaying
 
 
@@ -74,7 +120,7 @@
       return 0;
     }
 
-    bool setup_sd_and_log(const String& LogMessage){
+    bool setup_sd_and_log(const String& LogMessage, const bool logORnot ){
       spiSD.begin(MY_SCLK, MY_MISO,MY_MOSI, MY_CS_SD);
       spiSD.setFrequency(SD_SPI_SPEED);
 
@@ -95,10 +141,12 @@
         return 3;
       }
       Serial.println("SD OK");
-      String SDlog = LogMessage + "\r\n";
-      char char_ming_message[SDlog.length()];
-      SDlog.toCharArray(char_ming_message, SDlog.length());
-      sd_append_success = appendFile(SD, LOGGING_FILE_NAME, char_ming_message);
+      if( logORnot ){ //check if message is empty, if it is skip. Used to Init SD card
+        String SDlog = LogMessage + "\r\n";
+        char char_ming_message[SDlog.length()];
+        SDlog.toCharArray(char_ming_message, SDlog.length());
+        sd_append_success = appendFile(SD, LOGGING_FILE_NAME, char_ming_message);
+      }
       SD.end();
       spiSD.end();
       return sd_append_success;
@@ -159,49 +207,51 @@
 
 
 // ## FUNCTION GATHER ALL DATA
-  void gather_ALL_data( void ){
+
+  void gather_ALL_data( bool serial_yes_no ){
     current_time = RTCDS3231.now();
-    SDStringTime = ((current_time.hour() < 10 ? "0" : "") + String(current_time.hour()) + ":" + (current_time.minute() < 10 ? "0" : "") + String(current_time.minute()) + ":" + (current_time.second() < 10 ? "0" : "") + String(current_time.second()) + ", " + String(days[current_time.dayOfTheWeek()]) + " " + (current_time.day() < 10 ? "0" : "") + String(current_time.day()) + "." + (current_time.month() < 10 ? "0" : "") + String(current_time.month()) + "." + String(current_time.year(), DEC) + " ->\t");
-    Serial.print(SDStringTime);
+    SDStringTime = ((current_time.hour() < 10 ? "0" : "") + String(current_time.hour()) + ":" + (current_time.minute() < 10 ? "0" : "") + String(current_time.minute()) + ":" + (current_time.second() < 10 ? "0" : "") + String(current_time.second()) + ", " + String(days[current_time.dayOfTheWeek()]) + " " + (current_time.day() < 10 ? "0" : "") + String(current_time.day()) + "." + (current_time.month() < 10 ? "0" : "") + String(current_time.month()) + "." + String(current_time.year(), DEC) + " ->  ");
+    if( serial_yes_no ) Serial.print(SDStringTime);
 
 
     ext_temperature = data_extTemp();
     if (ext_temperature.exit_code){
-      SDStringExttemp = "ExtTemp: error";
-      Serial.println(SDStringExttemp);}
+      SDStringExttemp = "ExtTemp: error  ";
+      if( serial_yes_no )  Serial.print(SDStringExttemp);}
     else {
-      SDStringExttemp = "Ext temp: " + String(ext_temperature.value) + " degC" + "\t|\t";
-      Serial.print(SDStringExttemp);
+      SDStringExttemp = "Ext temp: " + String(ext_temperature.value) + " degC  ";
+      if( serial_yes_no )  Serial.print(SDStringExttemp);
     }
 
 
     bme680_readings = data_bme680();
     if( bme680_readings.exit_code == 1){
       SDStringBME680 = "BME680: begin readings error\n";
-      Serial.print(SDStringBME680);
+      if( serial_yes_no )  Serial.print(SDStringBME680);
     }
     else if (bme680_readings.exit_code == 2) {
       SDStringBME680 = "BME680: end readings error\n";
-      Serial.print(SDStringBME680);
+      if( serial_yes_no )  Serial.print(SDStringBME680);
     }
     else { 
-      SDStringBME680 = "Temp: " + String(bme680_readings.temp) + " degC " + "Pressure: " + String(bme680_readings.press / 100.0) + " hPa " + "Humidity: " + String(bme680_readings.hum) + " % " + "Gas: " + String(bme680_readings.gas / 1000.0) + " KOhms " + "~Altitude: " + String(bme680_readings.alti) + " m" + "\t|\t";
-      Serial.print(SDStringBME680);
+      SDStringBME680 = "Temp: " + String(bme680_readings.temp) + " degC " + "Pressure: " + String(bme680_readings.press / 100.0) + " hPa " + "Humidity: " + String(bme680_readings.hum) + " % " + "Gas: " + String(bme680_readings.gas / 1000.0) + " KOhms " + "~Altitude: " + String(bme680_readings.alti) + " m  ";
+      if( serial_yes_no )  Serial.print(SDStringBME680);
     }
 
     scd40_readings = data_SCD40();
     if(scd40_readings.exit_code == 1){
       //on display do not refresh parts of the screen which have previous readings
       SDStringSCD40 = "SCD40: error reading data, or not enough time for measurments, or the data is invalid";
-      Serial.print(SDStringSCD40 + "\n");
+      if( serial_yes_no )  Serial.print(SDStringSCD40 + "\n");
     }
     else{
       SDStringSCD40 = "Co2: " + String(scd40_readings.co2) + " Temp: " + String(scd40_readings.temperature) + " degC Humidity: " + String(scd40_readings.humidity) + " %";
-      Serial.print(SDStringSCD40 + "\n");
+      if( serial_yes_no )  Serial.print(SDStringSCD40 + "\n");
     }
 
     //return String( SDStringTime + SDStringExttemp + SDStringBME680 + SDStringSCD40 );
   }
+
 // ## END FUNCTION GATHER ALL DATA
 
 
@@ -237,7 +287,7 @@
 
     // ## SD LOGGING
       #if defined(ENABLE_SD)
-        setup_sd_and_log(String("Starting up..." + String(millis()) + "ms"));
+        setup_sd_and_log(String("Starting up..." + String(millis()) + "ms"), true );
       #endif
     // ## END SD LOGGING
 
@@ -266,6 +316,7 @@
         while (1);
       }
       //RTCDS3231.adjust(DateTime(__DATE__, __TIME__)); //set time like PCs
+      PrepareAlarmsDS3231(); //disables stuff and prepares for alarms
     // ## END RTC DS3231 setup
 
     // ## SCD40 CO2 module
@@ -290,14 +341,14 @@
     // ## END SCD40 CO2 module
 
     // ## DS setup
-      while(!Serial){} //it should wait for serial but it does not?
+      // while(!Serial){} //it should wait for serial but it does not?
       // pinMode(builtinled, OUTPUT);
       // digitalWrite(builtinled, HIGH);
       // Serial.println("DS: LED configured");
       // ++DS_BootCount;
       // Serial.println("Boot number: " + String(DS_BootCount) );
 
-      esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+      //esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
     // ## END DS setup
 
@@ -308,7 +359,7 @@
   void later_setups( void ) {
 
     // ## SERIAL
-      Serial.begin(115200);
+      //Serial.begin(115200);
     // ## END SERIAL
 
     // ## LCD BAKCLIGHT
@@ -334,7 +385,7 @@
 
     // ## SD LOGGING
       #if defined(ENABLE_SD)
-        setup_sd_and_log(String("Starting up..." + String(millis()) + "ms"));
+        setup_sd_and_log("", false );
       #endif
     // ## END SD LOGGING
 
@@ -363,6 +414,7 @@
         while (1);
       }
       //RTCDS3231.adjust(DateTime(__DATE__, __TIME__)); //set time like PCs
+      PrepareAlarmsDS3231(); //disables stuff and prepares for alarms
     // ## END RTC DS3231 setup
 
     // ## SCD40 CO2 module
@@ -394,7 +446,7 @@
       // ++DS_BootCount;
       // Serial.println("Boot number: " + String(DS_BootCount) );
 
-      esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+      //esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
     // ## END DS setup
       
@@ -403,14 +455,14 @@
 
   //used to just gather data and log them, no display no user interface:
   void deepsleep_setups( void ) {
-
+    // remove serial
     // ## SERIAL
-      Serial.begin(115200);
+    //  Serial.begin(115200);
     // ## END SERIAL
 
     // ## SD LOGGING
       #if defined(ENABLE_SD)
-        setup_sd_and_log(String("Starting up..." + String(millis()) + "ms"));
+        setup_sd_and_log("", false );
       #endif
     // ## END SD LOGGING
 
@@ -439,6 +491,7 @@
         while (1);
       }
       //RTCDS3231.adjust(DateTime(__DATE__, __TIME__)); //set time like PCs
+      PrepareAlarmsDS3231(); //disables stuff and prepares for alarms
     // ## END RTC DS3231 setup
 
     // ## SCD40 CO2 module
@@ -469,15 +522,58 @@
       // Serial.println("DS: LED configured");
       // ++DS_BootCount;
       // Serial.println("Boot number: " + String(DS_BootCount) );
-
-      esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+      //esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
     // ## END DS setup
 
   } // END deepsleep_setups()
 
-
 // ## END Alternative void setups() functions
+
+
+// ## Helpers functions (DS3231 alarms preparations, )
+
+  //setup DS3231 for alarms (usually after first boot after programming, but it will do it every signle time.)
+  void PrepareAlarmsDS3231( void ){
+
+    //we don't need the 32K Pin, so disable it
+    RTCDS3231.disable32K();
+
+    // Clear alarm flag on RTC (important for the first run after programming)
+    RTCDS3231.clearAlarm(1);
+    RTCDS3231.clearAlarm(2);
+
+    // stop oscillating signals at SQW Pin
+    // otherwise setAlarm1 will fail
+    RTCDS3231.writeSqwPinMode(DS3231_OFF);
+
+    // turn off alarm 2 (in case it isn't off already)
+    // again, this isn't done at reboot, so a previously set alarm could easily go overlooked
+    RTCDS3231.disableAlarm(2);
+    
+  }
+
+  //set next alarm for +1min. Should always be called after PrepareAlarmsDS3231() and gather_ALL_data(); since it relies on time collected there.
+  void SetAlarmsDS3231 ( void ){
+    next_alarm_time = current_time + TimeSpan(0, 0, 1, 0); //add 1min
+    RTCDS3231.clearAlarm(1);
+    RTCDS3231.disableAlarm(1);
+    RTCDS3231.setAlarm1(next_alarm_time, DS3231_A1_Second);
+    Serial.print("Setting up next alarm. Current time:" + String(SDStringTime) + " + 1min = " + String(next_alarm_time.hour()) + ":" + String(next_alarm_time.minute()) + ":" + String(next_alarm_time.second()) + "\n");
+  }
+
+  void Interrupt_AlarmByDS3231 ( void ){
+    Serial.print("DS3231 caused an alarm. Setting bool to handle alarm.\n");
+    AlarmHappened = true; //so that in loop next alarm can be set :/
+
+    //can't put any I2C here bcse Interrupt routine doesn't like them. ChatGPT explained it like that:
+    // Reset Issue: The reset you're experiencing is most likely a watchdog timer timeout. The watchdog is triggered because the I2C communication inside the interrupt routine freezes the system, preventing the loop() from running and performing its usual tasks.
+    // Solution: Move Alarm Setting Outside of ISR
+    //well it works, and maybe it makes sense.
+
+  }
+
+// ## END Helpers functions
 
 
 // ##

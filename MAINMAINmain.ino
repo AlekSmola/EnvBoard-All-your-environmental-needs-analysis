@@ -1,3 +1,4 @@
+
 /* TO-DOs:
 -dodać te wsszystkie moduły że jak ich nie ma to nie ma  i zeby działało dalej 
   z SD też  
@@ -12,6 +13,13 @@
 - dodać od c02 jakieś skale czy jest ok czy nie 
 - jakiś wireless module?
 - add ifdefined(SDCARD) where required
+- 'const String scd40_serial_number = "0x3E8DCF073B87";' most likely not required
+- zoptymalizować writing and reading functions of littlefs (2sec for just a read operation...)
+- jesus i have this variable MeasuredDataMinAvgMax which stores data in format min,max,avg.... instead of min,avg,max
+- dodaj jednostki do graphów
+- make my logo as bitmap
+- WEATHER data, first screen, make it more ioptimzied by just otr not? this black(entire screen)?
+- when there is no new c02 readings, use older one (last valid) on display weather section. now it just uses last stored value in MeasuredDataMinAvgMax. Search for: `//no new readings, so use old? not really this one is most likely very obsolete:`
 */
 
 /* IMPORTANT NOTES:
@@ -19,6 +27,8 @@
 !!! board: LOLIN S2 Mini !!!
 
 Everything 'DS' is DeepSleep related
+
+RUN `littlefs_inits.ino` first.
 
 
 I2C device found at address 0x62  !
@@ -28,7 +38,7 @@ I2C device found at address 0x77  !
 
 #define ENABLE_SD //if you want SD logging or not. comment out to disable SD card functionality completely. Saves 4% of program storage space
 
-// ### IMPORT LIBRARIES IMPORT
+// ### IMPORT LIBRARIES
 
   // ## EXTERNAL TEMP SENSOR DS18B20
     #include <OneWire.h>
@@ -48,14 +58,18 @@ I2C device found at address 0x77  !
   // ## END DS3231 Real Time Clock
 
   // ## SCD40 CO2 sensor
-    #include <SensirionI2CScd4x.h>
+    #include <SensirionI2cScd4x.h>
   // ## END SCD40 CO2 sensor
 
   // ## LCD setup
     #include <Arduino.h>
     #include <U8g2lib.h>
     #include "SPI.h"
-  // ## LCD setup
+  // ## END LCD setup
+
+  // ## LCD graphs setup
+    #include <U8g2Graphing.h>
+  // ## END LCD graphs setup
 
   // ## SD CARD logging
     #if defined(ENABLE_SD)
@@ -69,6 +83,12 @@ I2C device found at address 0x77  !
   // ## ESP DEEP SLEEP
     #include <esp_sleep.h>
   // ## END ESP DEEP SLEEP
+
+  // ## LittleFS stuff
+    #include <Arduino.h>
+    #include "FS.h"
+    #include <LittleFS.h>
+  // ## END LittleFS stuff
 
 // ### END IMPORT LIBRARIES 
 
@@ -145,7 +165,7 @@ I2C device found at address 0x77  !
   // ## END REQUIREMENTS for RTC DS3231
 
   // ## REQUIREMENTS for SCD40
-    SensirionI2CScd4x SCD40;
+    SensirionI2cScd4x SCD40;
   // ## END REQUIREMENTS for SCD40
 
   // ## REQUIREMENTS for LCD setup
@@ -204,20 +224,55 @@ I2C device found at address 0x77  !
   
   // ## Multiple Screens and Their refreshes + Button handling
 
-    const uint16_t MenusNumber = 7; //like real number, not current menu, 2 means two screens
+    const uint16_t MenusNumber = 7; //like a real number, not current menu, 2 means 2 screens
     uint16_t CurrentMenu = 0;
     const uint8_t ButtonDebounce = 200; //ms super long but whatever
     uint32_t DisplayLastRefreshed = 0;
     const uint16_t DisplayRefreshInterval = 1000; //ms
     bool LCDForceRefresh = false;
 
-    bool IsRefreshRequired = {}; //just to check if each screen needs to be refreshed
+    bool IsRefreshRequired[6] = {1,1,1,1,1, 1}; //just to check if each screen needs to be refreshed, 4 graphs + stats + credits which never need to be refreshed. weather refreshes every time
   
   // ## END Multiple Screens and Their refreshes + Button handling
   
   // ## REQUIREMENTS additional stuff
-    const String script_version = "v.beta (25.12.2024)";
+
+    const String script_version = "v.beta (01.02.2025)";
+  
   // ## END REQUIREMENTS additional stuff
+
+  // ## REQUIREMENTS Graphs
+    const byte GraphsNumber = 4; //amount of graphs, just bcse we have temperature, humididty, pressure and co2, so 4
+    const byte GraphDataLimit = 107; //amount of points which can be displayed on one grpah. 128 width - 21 pixels which are occupied by Yaxis and its legend. 107 because it only then draws the hole screen, no idea why
+    const int HistoricalDataBuffer = 1440; //24*60 original (1440); has to be 'int' since byte only hold up to 160. Got to know that the hard way.
+    const int MinAvgMaxDataBuffer = 4; //min,max,avg,and number of readings
+    #define MEASUREDDATAMINAVGMAX_FILE  "/minavgmax.txt" //files on LittleFS storage
+    #define MEASUREDDATAHISTORICAL_FILE "/historical.txt"
+
+    /* Stored on littleFS */float MeasuredDataHistorical[GraphsNumber][HistoricalDataBuffer] = {0}; //every 1 min for 24h. 24*60=1440 time 4 = 5760 floats :heart:
+    /* Stored on littleFS */float MeasuredDataMinAvgMax[GraphsNumber][MinAvgMaxDataBuffer] = {{999,  -999, 0, 0},   //temp
+                                                                                              {999,  -999, 0, 0},   //hum 
+                                                                                              {9999, -9999, 0, 0},  //press
+                                                                                              {999,  -999, 0, 0}};  //co2
+    /* 4x4 matrix of floats for data statisctics, # should be int but that's easier that way.
+        |  min  |  max  |  avg  |  #
+    -------------|-------|-------|-----
+    temp | 0.00  | 1.00  | 2.00  | 3.00 
+    hum  | 1.00  | 2.00  | 3.00  | 4.00 
+    pres | 2.00  | 3.00  | 4.00  | 5.00 
+    co2  | 3.00  | 4.00  | 5.00  | 6.00 
+    */
+
+    //does not require to be preserved, since it is recalculated every time: (because i have 240MHz uController)
+    float GraphDataHistorical[GraphsNumber][GraphDataLimit];
+
+    U8g2Graphing tempGraph(&u8g2); // [0] 
+    U8g2Graphing humGraph(&u8g2); // [1]
+    U8g2Graphing pressGraph(&u8g2); // [2]
+    U8g2Graphing co2Graph(&u8g2); // [3]
+
+  // ## END REQUIREMENTS Graphs
+
 
   //just temp
   const uint8_t builtinled = 15;
@@ -251,6 +306,21 @@ void setup() {
 
   // ## END DS setup
 
+  // #this should be moved to corresponding init() functions    : 
+
+  // ## Graphs init
+    tempGraph.begin(0, 9, 128, 63);
+    tempGraph.displaySet(false, false);
+    humGraph.begin(0, 9, 128, 63);
+    humGraph.displaySet(false, false);
+    pressGraph.begin(0, 9, 128, 63);
+    pressGraph.displaySet(false, false);
+    co2Graph.begin(0, 9, 128, 63);
+    co2Graph.displaySet(false, false);
+  // ## END  Graphs init
+
+  // #this should be moved to corresponding init() functions    ^  
+
   switch(wakeup_reason){   
 
     case 0: 
@@ -259,7 +329,7 @@ void setup() {
       gather_ALL_data(0);
       SetAlarmsDS3231(); 
       attachInterrupt(digitalPinToInterrupt(DS3231InterruptPin), Interrupt_AlarmByDS3231, FALLING);
-      //#error here also set interrupts, remember to detach them as well. TRACK 16
+     
       DS_LastPressed = millis();
       while ( millis() - DS_LastPressed < DS_DisplayDelay){ 
         if ( AlarmHappened && RTCDS3231.alarmFired(1)){
@@ -269,6 +339,10 @@ void setup() {
           SetAlarmsDS3231();
           Serial.print("\tLogging Data to SD card...\n");
           setup_sd_and_log( (SDStringTime + SDStringExttemp + SDStringBME680 + SDStringSCD40), true );
+
+          IsRefreshRequired[0]=1;IsRefreshRequired[1]=1;IsRefreshRequired[2]=1;IsRefreshRequired[3]=1;IsRefreshRequired[4]=1;IsRefreshRequired[5]=1; //crude but whatever
+          UPDATEHistoricalANDMinMaxAvg(); //Update Historical and MinMaxAvg with new data
+
           attachInterrupt(digitalPinToInterrupt(DS3231InterruptPin), Interrupt_AlarmByDS3231, FALLING);
           AlarmHappened = false;
           Serial.print("\tInterrupt completed. Following with screen refresdes and so on.\n");
@@ -295,6 +369,10 @@ void setup() {
             SetAlarmsDS3231();
             Serial.print("\tLogging Data to SD card...\n");
             setup_sd_and_log( SDStringTime + SDStringExttemp + SDStringBME680 + SDStringSCD40, true  );
+            
+            IsRefreshRequired[0]=1;IsRefreshRequired[1]=1;IsRefreshRequired[2]=1;IsRefreshRequired[3]=1;IsRefreshRequired[4]=1;IsRefreshRequired[5]=1; //crude but whatever
+            UPDATEHistoricalANDMinMaxAvg(); //Update Historical and MinMaxAvg with new data
+
             attachInterrupt(digitalPinToInterrupt(DS3231InterruptPin), Interrupt_AlarmByDS3231, FALLING);
             AlarmHappened = false;
             Serial.print("\tInterrupt completed. Following with screen refresdes and so on.\n");
@@ -305,17 +383,18 @@ void setup() {
         Serial.print("DS: Going to sleep now, because there was no acitivity for " + String(DS_DisplayDelay/1000) + " seconds: {ESP_SLEEP_WAKEUP_EXT1, button}\n");    
       }
 
-      #if defined(ENABLE_SD) 
-        if(WakeUp_pin_mask_after_WakeUp & (1ULL << DS3231InterruptPin)){
-          Serial.println("DS: Wakeup caused by external signal using RTC_IO. DS3231 sent an active alarm wakeup. Should gather and log data if so desired.\n");
-          deepsleep_setups();
-          gather_ALL_data(1);
-          SetAlarmsDS3231();
+       
+      if(WakeUp_pin_mask_after_WakeUp & (1ULL << DS3231InterruptPin)){
+        Serial.println("DS: Wakeup caused by external signal using RTC_IO. DS3231 sent an active alarm wakeup. Should gather and log data if so desired.\n");
+        deepsleep_setups();
+        gather_ALL_data(1);
+        SetAlarmsDS3231();
+        #if defined(ENABLE_SD)
           setup_sd_and_log( SDStringTime + SDStringExttemp + SDStringBME680 + SDStringSCD40, true  );
-          Serial.print("DS: Going to sleep now: {ESP_SLEEP_WAKEUP_EXT1, ds3231}\n");
-        }
-      #endif
-      
+        #endif
+        UPDATEHistoricalANDMinMaxAvg(); //Update Historical and MinMaxAvg with new data
+        Serial.print("DS: Going to sleep now: {ESP_SLEEP_WAKEUP_EXT1, ds3231}\n");
+      }
 
       break;
     
@@ -352,18 +431,24 @@ void setup() {
   */
 
   //i guess pinMode(both, INPUT_PULLUP); is not required?
-  #if defined(ENABLE_SD)
-    WakeUp_pin_mask |= (1ULL << DS3231InterruptPin);
-  #endif
+  // #if defined(ENABLE_SD)
+  WakeUp_pin_mask |= (1ULL << DS3231InterruptPin); //still required since we want graph and stats data to be compared
+  // #endif
   WakeUp_pin_mask |= (1ULL << ButtonTrigger);
   esp_sleep_enable_ext1_wakeup(WakeUp_pin_mask, ESP_EXT1_WAKEUP_ANY_LOW); // Wake up on LOW level
 
-  delay(500); // it is here for some reason, worry to remove :()
-
+  
   //COMMENT IF PROBLEMS?
   //RTCDS3231.clearAlarm(1); //CLEAR 1ST ALARM WHICH WE CARE ABOUT AFTER IT FIRED SO IT IS READY FOR NEXT ONE?
   // RTCDS3231.disableAlarm(1);
   //
+
+  // this above delay(500); can easliy be replaced by writing to LittleFS since it takes a lot of time.
+  // save both to LittleFS storage so that it's content is not lost after deepsleep
+  SaveDataToLittleFS_minavgmax(MeasuredDataMinAvgMax, GraphsNumber, MinAvgMaxDataBuffer);     //array, rows, columns
+  SaveDataToLittleFS_historical(MeasuredDataHistorical, GraphsNumber, HistoricalDataBuffer);  //array, rows, columns
+
+  delay(500); // it is here for some reason, worry to remove :()
 
   Serial.flush(); 
   esp_deep_sleep_start();
@@ -387,7 +472,7 @@ void loop() {
       CurrentMenu += 1;
       if(CurrentMenu > MenusNumber-1){ CurrentMenu = 0;} //-1 becasue we're counting from 0
       DS_LastPressed = millis();
-      LCDForceRefresh = true;
+      LCDForceRefresh = true; //when menu changes just do it
       Serial.print( "Button was pressed. Current menu: " + String(CurrentMenu) + "\n" );    
     }
         
@@ -400,31 +485,55 @@ void loop() {
           break;
           
         case 1:
-          display_draw_temgraph();
+          if (IsRefreshRequired[0]){ // force refresh graphs only every 1min since there is no point in doing it every time timeout happens
+            display_draw_temgraph();
+            IsRefreshRequired[0] = 0;
+            IsRefreshRequired[5] = 1; // update credits 
+          }
           break;
   
         case 2:
-          display_draw_humgraph();
+          if (IsRefreshRequired[1]){
+            display_draw_humgraph();
+            IsRefreshRequired[1] = 0;
+            IsRefreshRequired[5] = 1; // update credits 
+          }
           break;
   
         case 3:
-          display_draw_pressgraph();
+          if (IsRefreshRequired[2]){
+            display_draw_pressgraph();
+            IsRefreshRequired[2] = 0;
+            IsRefreshRequired[5] = 1; // update credits 
+          }
           break;
   
         case 4:
-          display_draw_c02graph();
+          if (IsRefreshRequired[3]){
+            display_draw_c02graph();
+            IsRefreshRequired[3] = 0;
+            IsRefreshRequired[5] = 1; // update credits 
+          }
           break;
   
         case 5:
-          display_draw_stats();
+          if (IsRefreshRequired[4]){
+            display_draw_stats();
+            IsRefreshRequired[4] = 0;
+            IsRefreshRequired[5] = 1; // update credits 
+          }
           break;
   
         case 6:
-          display_draw_credits();
+        
+          if (IsRefreshRequired[5]){
+            display_draw_credits();
+            IsRefreshRequired[5] = 0; // credits refresh only once
+          }
           break;
   
         default:
-          Serial.println("You should never see this message like EVER!");
+          Serial.println("You should never see this message, like EVER!");
           break;
   
       }  // END switch(CurrentMenu)
